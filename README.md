@@ -4,9 +4,9 @@ Scrapes America's Test Kitchen website for recipes and saves PNG screenshots and
 
 ## Pre-requisites 
 
-* [Chrome v111](https://www.techspot.com/downloads/4718-google-chrome-for-windows.html). If you have a different version of Chrome, replace with the corresponding driver found [here](https://chromedriver.chromium.org/).
+* Google Chrome (any recent version). Selenium 4.11+ automatically finds or downloads the matching chromedriver, so the bundled `chromedriver` binaries (Chrome v111) are no longer needed. Use `--driver` only if you want to point at a specific chromedriver.
 
-* Python 3.6 with an environment built off of ```requirements.txt```.
+* Python 3.8+ with an environment built off of ```requirements.txt```.
 
 * America's Test Kitchen/Cook's Country/Cook's Illustrated web subscription (or [trial](https://www.cooksillustrated.com/trial)).
   
@@ -14,13 +14,19 @@ Scrapes America's Test Kitchen website for recipes and saves PNG screenshots and
 ### ```get_recipes.py```: Grab individual recipes from a list
 * ```-h, --help``` : show this help message and exit
 * ```-e EMAIL, --email EMAIL``` : ATK email for login.
-* ```-p PASSWORD, --password PASSWORD``` : **Single quoted** password for login. For example ```'my_password!*'```
+* ```-p PASSWORD, --password PASSWORD``` : **Single quoted** password for login. For example ```'my_password!*'```. Optional: if omitted, the password is read from the ```ATK_PASSWORD``` environment variable, or you are prompted for it (this keeps it out of your shell history).
 * ```-r RECIPES, --recipes RECIPES``` : Text file containing a list of **individual recipes** to grab.
 * ```-j JSON, --json JSON``` : Get recipes as json for mealie (default **True**)
 * ```-i IMAGE, --image IMAGE``` : Get recipes as images (default **False**)
 * ```-o OUT_PATH, --out_path OUT_PATH``` : Location to save images/json (default './recipes/')
-* ```--driver DRIVER ``` : Path to the chromedriver. (default './chromedriver')
+* ```--driver DRIVER ``` : Path to a chromedriver matching your Chrome. (default: Selenium finds/downloads one)
+* ```--chrome CHROME ``` : Path to the Chrome/Chromium binary. (default: system Chrome)
 * ```--verbose``` : verbose output
+
+Example:
+```
+python get_recipes.py -e you@example.com -r recipes_to_get.txt -o ./recipes/
+```
 
 ### ```get_searches.py```: Traverse search results and grab all recipes within
 * ```-h, --help``` : show this help message and exit
@@ -40,7 +46,7 @@ Scrapes America's Test Kitchen website for recipes and saves PNG screenshots and
 5. Each page source is passed to BeautifulSoup, which extracts all recipe links.
 6. Each recipe link is loaded with Selenium. Page dimensions are determined using page divs. 
 7. If ```-i``` is specified, a screenshot is saved. The Chrome window is resized to fit these dimensions and a screenshot is saved to the specified path. Screenshots are cleaned using Pillow and saved as ```<image>.trimmed.png```
-8. If ```-j``` is specified, recipe information is smartly scraped and loaded into JSON for later import to a recipe manager (e.g. mealie). The highlight image is also saved as a ```.jp2``` image (this is the format used by ATK)
+8. If ```-j``` is specified, recipe information is read from the schema.org Recipe data ATK embeds in each page (plus ingredient group headings and "Why This Recipe Works" from the page itself) and loaded into JSON for later import to a recipe manager (e.g. mealie). The highlight image is also saved as a ```.jp2``` image (this is the format used by ATK)
 9. The program will load the next page and repeat.
 
 ## Disclaimer
