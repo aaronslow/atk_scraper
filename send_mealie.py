@@ -76,6 +76,8 @@ def import_from_filelist(filelist, token, mealie_url):
     data["userId"] = temp["userId"]
     data["groupId"] = temp["groupId"]
 
+    # The schema.org markers are for file imports, not the recipe API
+    data = {k: v for k, v in data.items() if not k.startswith("@")}
     response = requests.patch(mealie_url + "/api/recipes/"+slug, headers=headers, json=data)
 
     # ADD image if one exists

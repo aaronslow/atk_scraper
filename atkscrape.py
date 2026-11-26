@@ -363,6 +363,10 @@ def parse_recipe(html, url=""):
                         steps.append((section, _text(li)))
 
     recipe = {}
+    # Mark the file as a schema.org Recipe so recipe managers (e.g. mealie's
+    # JSON import) recognise it
+    recipe["@context"] = "https://schema.org"
+    recipe["@type"] = "Recipe"
     recipe["name"] = title
     recipe["description"] = description
     recipe["tags"] = tags
