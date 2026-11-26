@@ -13,6 +13,7 @@ from selenium.webdriver.chrome.service import Service
 import os
 from os.path import basename
 from os.path import splitext
+from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
 import time
 import uuid
 import json
@@ -174,52 +175,6 @@ def format_images(path):
         except Exception as e:
             print(e)
         curr += 1
-
-def check_exists_by_class(class_name):
-    # Check if a page element exists based on class name (return bool)
-    try:
-        driver.find_element(By.CLASS_NAME, class_name)
-    except NoSuchElementException:
-        return False
-    return True
-
-# ATK gets a bit tricky and two different ways of loading more recipes, depending on cookbook vs category search
-def check_more_recipes(driver):
-    try: # cookbooks
-        driver.find_element(By.CLASS_NAME, 'browse-load-more')
-    except NoSuchElementException:
-        try: # search results
-            driver.find_element(By.XPATH, '//*[@id="main"]/div[1]/section[2]/div/div/div[2]/div[2]/div/button')
-        except NoSuchElementException:
-            return False
-    return True
-
-
-def load_full_page(driver):    
-    # Check for "Load More Recipes" button and click it until all are loaded
-    print("Loading all recipes", end='')
-    
-    # Make sure that we are in a good state before starting
-    while check_more_recipes(driver) == True:
-        print('.', end='', flush=True)
-        try: # cookbooks
-            WebDriverWait(driver, 1).until(
-                EC.any_of(
-                    EC.element_to_be_clickable((By.CLASS_NAME, "browse-load-more")),
-                    EC.element_to_be_clickable((By.XPATH, '//*[@id="main"]/div[1]/section[2]/div/div/div[2]/div[2]/div/button'))
-                )
-            ).click()
-        except TimeoutException:
-            try: # Maybe there's a popup
-                    pop = driver.find_element(By.CLASS_NAME, 'bx-button')
-                    pop.click()
-            except: # This is another pop-up that covers the screen, so we close that too
-                try:
-                    pop = driver.find_element(By.CLASS_NAME, 'bx-close-link')
-                    pop.click()
-                except Exception as e: # Other exceptions can be added here (additional pop-ups)
-                    pass
-    print("\n", flush=True)
 
 def make_image(driver, slug, savepath):
     """
@@ -495,76 +450,149 @@ def save_one_recipe(driver, recipe, do_image, do_json, savepath):
 
 
 
-def save_recipes(driver, search_result, do_image, do_json, sortby, savepath):
-    page = search_result
-    try:
-        driver.get(page)
-    except Exception as e:
-        print(e)
+ATK_BASE = "https://www.americastestkitchen.com"
 
-    if sortby == "popularity":
-        try:
-            print("Sorting by popularity")
-            WebDriverWait(driver, 2).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="show-hide--SortBy"]/div[1]/label'))).click()
-        except:
-            pass # b/c sometimes there's no date/popularity sorting, e.g. books
-    if sortby == "date":
-        try:
-            print("Sorting by date")
-            WebDriverWait(driver, 2).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="show-hide--SortBy"]/div[2]/label'))).click()
-        except:
-            pass # b/c sometimes there's no date/popularity sorting, e.g. books
-    load_full_page(driver)
-    # Pass page source to beautiful soup so we can extract recipe links
-    soup = BeautifulSoup(driver.page_source, 'html.parser')
+# Values for get_searches.py --sortby, mapped to the search page's "s" URL parameter
+SORT_OPTIONS = {
+    "relevance": None,                                  # site default
+    "date": "everest_search_published_date_desc",       # "Most Recent"
+    "popularity": "everest_search_avg_rating_desc",     # "Highest Rated"
+    "rating": "everest_search_avg_rating_desc",
+}
 
-    # Build list of recipe links
+def normalize_search_url(page, sortby=None):
+    """
+    Bring an old-style search URL up to date and apply the sort order.
+
+    The site renamed its filter parameters from fR[field][0]=value to
+    r[field][0]=value, and sorting is now the "s" parameter. Returns
+    (url, is_search_page).
+    """
+    parts = urlsplit(page)
+    if not parts.netloc:
+        parts = urlsplit(urljoin(ATK_BASE, page))
+    if not parts.path.rstrip('/').endswith('/search'):
+        return (urlunsplit(parts), False)
+    query = []
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if key.startswith('fR['):
+            key = 'r[' + key[3:]
+        if key in ('s', 'p'):
+            continue  # set below / by load_full_page
+        query.append((key, value))
+    sort_value = SORT_OPTIONS.get(sortby)
+    has_text = any(k == 'q' and v.strip() for k, v in query)
+    if sort_value and has_text:
+        # The site's sorted views return only close matches for text searches
+        # (e.g. 18 instead of 203 results), so keep relevance order there.
+        print("  Note: not sorting by " + sortby + " because this search has search words; "
+              "sorting would drop most results.")
+    elif sort_value:
+        query.insert(0, ('s', sort_value))
+    return (urlunsplit(parts._replace(query=urlencode(query))), True)
+
+def recipe_links(html):
+    """Return the recipe page URLs linked from a page, without tracking parameters."""
+    soup = BeautifulSoup(html, 'html.parser')
     links = []
-    for link in soup.findAll('a', attrs={'href': re.compile(r"/recipes/[0-9]+-[a-zA-Z]+")}): # matches ATK, CooksIllustrates, and CooksCountry
-        l = link.get('href')
-        if re.search(r"/print$", l): # I don't know why ATK keeps serving up print versions
-            exit()
-        links.append(l)
+    for a in soup.find_all('a', href=True):
+        url = urljoin(ATK_BASE, a['href'])
+        parts = urlsplit(url)
+        if not re.match(r'^/recipes/\d+-[^/]+$', parts.path):
+            continue  # also skips /print pages
+        url = urlunsplit((parts.scheme, parts.netloc, parts.path, '', ''))
+        if url not in links:
+            links.append(url)
+    return links
 
-    # Variables for monitoring progress
-    links = sorted(set(links))
-    length = len(links)
-    digits = len(str(length))
-    curr = 1
+def _set_page(url, page):
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != 'p']
+    if page > 1:
+        query.append(('p', str(page)))
+    return urlunsplit(parts._replace(query=urlencode(query)))
 
-    # Iterate over each recipe link
-    for link in links:
-        slug = basename(link)
+def _has_load_more(driver):
+    return any(b.is_displayed() for b in
+               driver.find_elements(By.CSS_SELECTOR, 'button[aria-label="Load More"]'))
 
-        if do_image & do_json:
-            if os.path.exists(savepath+"/"+slug+".png") & os.path.exists(savepath+"/"+slug+".json"):
-                print("Already fetched image and json for " + slug)
-                continue
-        elif do_image:
-            if os.path.exists(savepath+"/"+slug+".png"):
-                print("Already fetched image and json for " + slug)
-                continue
-        elif do_json:
-            if os.path.exists(savepath+"/"+slug+".json"):
-                print("Already fetched json for " + slug)
-                continue
-
-        # Load the recipe
-        print('{0} / {1} | https://www.americastestkitchen.com{2}'.format(
-            str(curr).zfill(digits), length, link))
-        if link == '/recipes/24-easy-caramel-sauce':
-            link = '/recipes/10610-all-purpose-caramel-sauce'
-            driver.get("https://www.cooksillustrated.com/recipes/10610-all-purpose-caramel-sauce")
+def _wait_for_results(driver, timeout=30):
+    """
+    Wait for the client-side app to finish rendering the result list: until the
+    number of recipe links has stayed the same for a few seconds.
+    """
+    deadline = time.time() + timeout
+    last, stable = -1, 0
+    while time.time() < deadline:
+        count = len(driver.find_elements(By.CSS_SELECTOR, 'a[href*="/recipes/"]'))
+        if count > 0 and count == last:
+            stable += 1
+            if stable >= 3:
+                return
         else:
-            driver.get("https://www.americastestkitchen.com{0}".format(link))
+            stable = 0
+        last = count
+        time.sleep(1)
 
-        if do_json:
-            recipe, img = make_json(driver)
-            with open(savepath+"/"+slug+".json", "w") as write_file:
-                json.dump(recipe, write_file, indent=4)
-            if img != None:
-                with open(savepath+"/"+slug+".jp2", "wb") as f:
-                    f.write(img)
-        if do_image:
-            make_image(driver, slug, savepath) # makes a screenshot internally
-        curr += 1
+def load_full_page(driver, url, max_page=1000):
+    """
+    Load a search page with all of its results showing.
+
+    "Load More" on the search page just adds ?p=N to the URL, and loading ?p=N
+    directly shows every result up to page N. So instead of clicking the button
+    over and over, keep doubling N until the button is gone.
+    """
+    print("Loading all recipes", end='', flush=True)
+    page = 1
+    driver.get(url)
+    _wait_for_results(driver)
+    close_popups(driver)
+    count = len(recipe_links(driver.page_source))
+    while _has_load_more(driver) and page < max_page:
+        page = min(page * 2, max_page)
+        print('.', end='', flush=True)
+        driver.get(_set_page(url, page))
+        _wait_for_results(driver)
+        new_count = len(recipe_links(driver.page_source))
+        if new_count <= count and page > 2:
+            break  # the site stopped returning more results
+        count = new_count
+    print("\n", flush=True)
+
+def save_recipes(driver, search_result, do_image, do_json, sortby, savepath):
+    url, is_search = normalize_search_url(search_result, sortby)
+    if is_search:
+        if 'search_browse_slugs' in url:
+            print("  Note: the site no longer supports filtering search by cookbook "
+                  "(search_browse_slugs); that filter is ignored.")
+        load_full_page(driver, url)
+    else:
+        # Cookbook (/books/... -> /collections/books/...) and other collection
+        # pages show a fixed list of recipes with no "Load More".
+        try:
+            driver.get(url)
+        except Exception as e:
+            print(e)
+        _wait_for_results(driver)
+        if '/collections/books/' in driver.current_url:
+            print("  Note: cookbook pages now list only the book's featured recipes.")
+
+    links = recipe_links(driver.page_source)
+    length = len(links)
+    print("Found {0} recipes".format(length))
+    digits = len(str(length))
+
+    for curr, link in enumerate(links, start=1):
+        slug = basename(link)
+        json_done = os.path.exists(os.path.join(savepath, slug + ".json"))
+        image_done = os.path.exists(os.path.join(savepath, slug + ".png"))
+        if (not do_json or json_done) and (not do_image or image_done):
+            print("Already fetched " + slug)
+            continue
+
+        print('{0} / {1} | {2}'.format(str(curr).zfill(digits), length, link))
+        try:
+            save_one_recipe(driver, link, do_image and not image_done,
+                            do_json and not json_done, savepath)
+        except Exception as e:
+            print("  Couldn't save " + link + ": " + str(e))

@@ -1,3 +1,7 @@
+# Pages for get_searches.py, one per line. Lines starting with # are ignored.
+# Search pages: search on americastestkitchen.com, tick filters, and copy the URL, e.g.
+# https://www.americastestkitchen.com/search?q=&r[search_dish_type_list][0]=Cookies
+# Cookbook pages below now return only each book's ~30 featured recipes.
 # Cook It In Cast Iron
 https://www.americastestkitchen.com/books/cook-it-in-cast-iron?q=&fR[search_browse_slugs][0]=cook-it-in-cast-iron&fR[search_document_klass][0]=recipe&fR[search_site_list][0]=atk
 # The Perfect Cookie Cookbook
